@@ -1,0 +1,22 @@
+command: ["python", "app.py"]
+
+env:
+  - name: ANTHROPIC_API_KEY
+    valueFrom:
+      secretRef:
+        scope: kisan_mitra
+        key: ANTHROPIC_API_KEY
+  - name: DATABRICKS_HOST
+    valueFrom:
+      secretRef:
+        scope: kisan_mitra
+        key: DATABRICKS_HOST
+  - name: DATABRICKS_TOKEN
+    valueFrom:
+      secretRef:
+        scope: kisan_mitra
+        key: DATABRICKS_TOKEN
+  - name: KISAN_FAISS_PATH
+    value: "/Workspace/Users/sarikashirolkar@gmail.com/kisan_mitra/faiss_index.bin"
+  - name: KISAN_DOCS_PATH
+    value: "/Workspace/Users/sarikashirolkar@gmail.com/kisan_mitra/documents.json"

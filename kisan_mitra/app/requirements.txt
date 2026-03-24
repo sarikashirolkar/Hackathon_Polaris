@@ -1,0 +1,6 @@
+anthropic>=0.40.0
+gradio>=4.0.0
+faiss-cpu>=1.7.4
+numpy>=1.24.0
+openai>=1.0.0          # for Databricks Foundation Model API (OpenAI-compatible)
+mlflow>=2.10.0

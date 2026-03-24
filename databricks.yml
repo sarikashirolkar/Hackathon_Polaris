@@ -1,0 +1,41 @@
+# Databricks Asset Bundle — Kisan Mitra Hackathon Project
+bundle:
+  name: kisan_mitra
+
+resources:
+  jobs:
+    setup_pipeline:
+      name: "Kisan Mitra — Setup Pipeline"
+      tasks:
+        - task_key: ingest_crops
+          notebook_task:
+            notebook_path: ./kisan_mitra/notebooks/01_ingest_data.py
+          new_cluster:
+            spark_version: "14.3.x-scala2.12"
+            node_type_id: "m5d.large"
+            num_workers: 1
+
+        - task_key: spark_etl
+          depends_on:
+            - task_key: ingest_crops
+          notebook_task:
+            notebook_path: ./kisan_mitra/notebooks/02_spark_etl.py
+
+        - task_key: build_vector_store
+          depends_on:
+            - task_key: spark_etl
+          notebook_task:
+            notebook_path: ./kisan_mitra/notebooks/03_build_vector_store.py
+
+        - task_key: ingest_scholarships
+          depends_on:
+            - task_key: ingest_crops
+          notebook_task:
+            notebook_path: ./kisan_mitra/notebooks/04_ingest_scholarships.py
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-2da48fcd-f53f.cloud.databricks.com
