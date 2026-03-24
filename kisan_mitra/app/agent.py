@@ -1,56 +1,58 @@
 """
 Kisan Mitra — AI Agent (Form-Filler)
-The agent replaces a static form by chatting with the farmer and
-extracting their profile, then calling the RAG tool automatically.
+Uses OpenAI GPT-4o-mini with tool use to gather farmer profile
+and call the RAG crop advisory tool.
 """
 import json
 import os
-import anthropic
+from openai import OpenAI
 from rag_pipeline import query_crop_advisory
 
-client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-# ── Tool the agent can call ──────────────────────────────────────────────────
 TOOLS = [
     {
-        "name": "query_crop_advisory",
-        "description": (
-            "Call this once you know the farmer's state, season, and land size. "
-            "It queries the crop database and returns personalised recommendations."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "state": {
-                    "type": "string",
-                    "description": "Indian state (e.g. Maharashtra, Punjab, Tamil Nadu)"
+        "type": "function",
+        "function": {
+            "name": "query_crop_advisory",
+            "description": (
+                "Call this once you know the farmer's state, season, and land size. "
+                "It queries the crop database and returns personalised recommendations."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "state": {
+                        "type": "string",
+                        "description": "Indian state (e.g. Maharashtra, Punjab, Tamil Nadu)"
+                    },
+                    "district": {
+                        "type": "string",
+                        "description": "District name, if mentioned"
+                    },
+                    "season": {
+                        "type": "string",
+                        "enum": ["Kharif", "Rabi", "Zaid"],
+                        "description": "Kharif = Jun-Oct, Rabi = Oct-Feb, Zaid = Feb-Jun"
+                    },
+                    "acres": {
+                        "type": "number",
+                        "description": "Farm size in acres"
+                    },
+                    "soil_type": {
+                        "type": "string",
+                        "enum": ["black", "loamy", "sandy", "clay", "red", "alluvial"],
+                        "description": "Soil type if farmer mentioned it"
+                    },
+                    "water_availability": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                        "description": "Irrigation or rainfall availability"
+                    },
                 },
-                "district": {
-                    "type": "string",
-                    "description": "District name, if mentioned"
-                },
-                "season": {
-                    "type": "string",
-                    "enum": ["Kharif", "Rabi", "Zaid"],
-                    "description": "Kharif = Jun-Oct, Rabi = Oct-Feb, Zaid = Feb-Jun"
-                },
-                "acres": {
-                    "type": "number",
-                    "description": "Farm size in acres"
-                },
-                "soil_type": {
-                    "type": "string",
-                    "enum": ["black", "loamy", "sandy", "clay", "red", "alluvial"],
-                    "description": "Soil type if farmer mentioned it"
-                },
-                "water_availability": {
-                    "type": "string",
-                    "enum": ["high", "medium", "low"],
-                    "description": "Irrigation or rainfall availability"
-                },
+                "required": ["state", "season", "acres"],
             },
-            "required": ["state", "season", "acres"],
-        },
+        }
     }
 ]
 
@@ -73,7 +75,6 @@ Rules:
 
 
 def _execute_tool(tool_name: str, tool_input: dict) -> str:
-    """Execute a tool call and return the result as a JSON string."""
     if tool_name == "query_crop_advisory":
         result = query_crop_advisory(**tool_input)
         return json.dumps(result, ensure_ascii=False)
@@ -81,55 +82,32 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
 
 
 def chat(user_message: str, history: list[dict]) -> tuple[str, list[dict]]:
-    """
-    Send one user message, run the agent (with possible tool calls),
-    and return (assistant_text, updated_history).
-
-    history is a list of {"role": ..., "content": ...} dicts matching
-    the Anthropic Messages API format.
-    """
-    # Append the new user turn
     history = history + [{"role": "user", "content": user_message}]
 
-    # Agentic loop — keep going until end_turn
     while True:
-        response = client.messages.create(
-            model="claude-haiku-4-5",
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
             max_tokens=1024,
-            system=SYSTEM_PROMPT,
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,
             tools=TOOLS,
-            messages=history,
+            tool_choice="auto",
         )
 
-        # Append assistant response to history (preserves tool_use blocks)
-        history = history + [{"role": "assistant", "content": response.content}]
+        msg = response.choices[0].message
+        history = history + [msg]
 
-        if response.stop_reason == "end_turn":
-            # Extract final text
-            text = next(
-                (b.text for b in response.content if b.type == "text"), ""
-            )
-            return text, history
+        if response.choices[0].finish_reason == "stop":
+            return msg.content or "", history
 
-        if response.stop_reason == "tool_use":
-            # Execute every tool the model requested
+        if response.choices[0].finish_reason == "tool_calls":
             tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    result_str = _execute_tool(block.name, block.input)
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result_str,
-                        }
-                    )
-            # Feed results back
-            history = history + [{"role": "user", "content": tool_results}]
-            # Loop continues → model will generate a final response
+            for tc in msg.tool_calls:
+                result_str = _execute_tool(tc.function.name, json.loads(tc.function.arguments))
+                tool_results.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result_str,
+                })
+            history = history + tool_results
         else:
-            # Unexpected stop reason — return whatever text we have
-            text = next(
-                (b.text for b in response.content if b.type == "text"), ""
-            )
-            return text, history
+            return msg.content or "", history
